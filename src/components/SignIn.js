@@ -15,10 +15,17 @@ function SignIn() {
     try {
       const res = await axios.post(`${API}/signin`, { email, password });
       const { user_id } = res.data;
+      const { name } =res.data;
       localStorage.setItem("user_id", user_id);
       localStorage.setItem("user_email", email);
       alert("Login Successful!");
-      navigate("/dashboard");
+      if (name=="Administrator") {
+        navigate("/admin");
+      }
+      else{
+
+        navigate("/dashboard");
+      }
     } catch (err) {
       console.error(err);
       alert(err.response?.data?.detail || "Invalid credentials!");

@@ -1,0 +1,90 @@
+/* Container for everything */
+.quiz-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 30px;
+  color: #fff;
+  font-family: "Poppins", sans-serif;
+}
+
+/* Glassmorphic card */
+.quiz-card {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  backdrop-filter: blur(12px);
+  padding: 30px;
+  width: 90%;
+  max-width: 800px;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4);
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+/* Headings */
+.quiz-card h2 {
+  margin-bottom: 20px;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* Category select */
+.quiz-card select {
+  width: 100%;
+  padding: 10px;
+  margin: 12px 0;
+  border-radius: 8px;
+  border: none;
+  outline: none;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-size: 14px;
+}
+
+/* Radio options */
+.quiz-option label {
+  display: block;
+  margin: 6px 0;
+  cursor: pointer;
+}
+
+.quiz-option input[type="radio"] {
+  margin-right: 8px;
+}
+
+/* Buttons */
+.quiz-card button {
+  padding: 10px 20px;
+  margin-top: 15px;
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 500;
+  background: linear-gradient(135deg, #007acc, #00c853);
+  color: #fff;
+  transition: 0.3s;
+}
+
+.quiz-card button:hover {
+  opacity: 0.85;
+}
+
+/* Individual question card */
+.question-card {
+  background: rgba(255, 255, 255, 0.04);
+  padding: 15px;
+  margin-bottom: 10px;
+  border-radius: 10px;
+  text-align: left;
+}
+
+/* Suggestion / result text */
+.result-text {
+  margin-top: 10px;
+  text-align: left;
+}
+
+.result-text h4 {
+  margin-bottom: 5px;
+}

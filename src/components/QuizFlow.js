@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
-import "../App.css";
+import "./QuizFlow.css";
 
 const API = process.env.REACT_APP_API_URL || "http://localhost:8000/api";
 
@@ -48,49 +48,53 @@ function QuizFlow() {
     }
   };
 
-  if (!userId) return <div style={{textAlign:"center", marginTop:30}}>Please sign in to continue.</div>;
+  if (!userId) return <div className="quiz-container">Please sign in to continue.</div>;
 
   if (result) {
     return (
-      <div className="auth-container" style={{ width: "700px" }}>
-        <h2>Result — {result.category}</h2>
-        <p><strong>Score:</strong> {result.score}/{result.max_score}</p>
-        <p><strong>Fit:</strong> {result.fit ? "Yes" : "Not yet"}</p>
-        <div style={{ textAlign: "left", marginTop: 10 }}>
-          <h4>Suggestion:</h4>
-          <p>{result.suggested_text}</p>
+      <div className="quiz-container">
+        <div className="quiz-card">
+          <h2>Result — {result.category}</h2>
+          <p><strong>Score:</strong> {result.score}/{result.max_score}</p>
+          <p><strong>Fit:</strong> {result.fit ? "Yes" : "Not yet"}</p>
+          <div className="result-text">
+            <h4>Suggestion:</h4>
+            <p>{result.suggested_text}</p>
+          </div>
+          <button onClick={() => { setResult(null); setQuestions([]); setCategory(""); }}>
+            Try Another
+          </button>
         </div>
-        <button onClick={() => { setResult(null); setQuestions([]); setCategory(""); }}>Try Another</button>
       </div>
     );
   }
 
   return (
-    <div style={{ textAlign: "center", marginTop: 30 }}>
+    <div className="quiz-container">
       {!questions.length ? (
-        <div className="auth-container" style={{ width: 350 }}>
+        <div className="quiz-card">
           <h2>Select Category</h2>
-          <select value={category} onChange={e => setCategory(e.target.value)} style={{ padding:10, width: '100%', borderRadius:8 }}>
+          <select value={category} onChange={e => setCategory(e.target.value)}>
             <option value="">-- choose --</option>
             {categories.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
-          <button style={{marginTop: 15}} onClick={chooseCategory}>{loading ? "Loading..." : "Get Questions"}</button>
+          <button onClick={chooseCategory}>{loading ? "Loading..." : "Get Questions"}</button>
         </div>
       ) : (
-        <div style={{ width: 800, margin: "0 auto", textAlign: "left" }}>
+        <div className="quiz-card">
           <h2>Category: {category}</h2>
           {questions.map((q, i) => (
-            <div key={q.id} style={{ background: "rgba(255,255,255,0.04)", padding: 12, marginBottom: 10, borderRadius: 8 }}>
-              <p><strong>{i+1}. {q.question}</strong></p>
-              <div>
+            <div key={q.id} className="question-card">
+              <p><strong>{i + 1}. {q.question}</strong></p>
+              <div className="quiz-option">
                 {q.options.map((opt, idx) => (
-                  <label key={idx} style={{ display: "block", margin: "6px 0" }}>
+                  <label key={idx}>
                     <input
                       type="radio"
                       name={q.id}
                       checked={answers[q.id] === idx}
                       onChange={() => selectOption(q.id, idx)}
-                    />{" "}
+                    />
                     {opt}
                   </label>
                 ))}
@@ -98,7 +102,7 @@ function QuizFlow() {
             </div>
           ))}
           <div style={{ textAlign: "center" }}>
-            <button onClick={submit} style={{ padding: "10px 20px", marginTop: 10 }}>{loading ? "Submitting..." : "Submit Answers"}</button>
+            <button onClick={submit}>{loading ? "Submitting..." : "Submit Answers"}</button>
           </div>
         </div>
       )}

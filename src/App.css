@@ -11,24 +11,23 @@ body {
 }
 
 /* Centering container */
+/* Centering container */
 .auth-container {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 20px;
   backdrop-filter: blur(12px);
   padding: 40px;
-  width: 350px;
+  width: 500px; /* Increased width */
+  max-width: 90%; /* Responsive on smaller screens */
+  max-height: 90vh; /* Avoid overflowing viewport */
+  overflow-y: auto; /* Scroll if content exceeds height */
   box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4);
   text-align: center;
 }
 
-.auth-container h2 {
-  margin-bottom: 25px;
-  font-weight: 600;
-  letter-spacing: 1px;
-}
-
 /* Input Fields */
-.auth-container input {
+.auth-container input,
+.auth-container select {
   width: 100%;
   padding: 12px 15px;
   margin: 10px 0;
@@ -41,8 +40,9 @@ body {
   letter-spacing: 0.5px;
 }
 
-.auth-container input::placeholder {
-  color: #ccc;
+/* Optional: Make select dropdown text readable */
+.auth-container select option {
+  color: black; 
 }
 
 /* Buttons */
@@ -64,18 +64,12 @@ body {
   opacity: 0.85;
 }
 
-/* Links */
-.auth-container p {
-  margin-top: 15px;
-  font-size: 14px;
+/* Scrollbar (optional for glass look) */
+.auth-container::-webkit-scrollbar {
+  width: 6px;
 }
 
-.auth-container a {
-  color: #00c9ff;
-  text-decoration: none;
-  font-weight: 600;
-}
-
-.auth-container a:hover {
-  text-decoration: underline;
+.auth-container::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 3px;
 }

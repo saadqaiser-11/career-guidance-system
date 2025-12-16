@@ -8,10 +8,12 @@ import os
 import random
 from datetime import datetime
 from bson import ObjectId
-
+from fastapi import Query 
 # Config
 MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
 DB_NAME = os.getenv("DB_NAME", "career_guidance_db")
+ADMIN_USERNAME = "admin@gmail.com"
+ADMIN_PASSWORD = "admin123"
 
 app = FastAPI(title="Career Guidance API - Sprint 2")
 
@@ -31,9 +33,20 @@ attempts_col = db["attempts"]
 
 # ---------- Models ----------
 class SignUpModel(BaseModel):
+    username: str
+    firstName: str
+    lastName: str
     email: EmailStr
+    gender: str
+    status: str
+    semester: int
+    degreeProgram: str
+    degreeName: str
+    department: str
+    cgpa: float
+    skills: Optional[str] = ""
     password: str
-    name: Optional[str] = None
+
 
 class SignInModel(BaseModel):
     email: EmailStr
@@ -63,18 +76,42 @@ async def signup(data: SignUpModel):
     existing = await users_col.find_one({"email": data.email})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
+
     user = {
+        "username": data.username,
+        "firstName": data.firstName,
+        "lastName": data.lastName,
         "email": data.email,
-        "password": data.password,   # prototype only; hash in production
-        "name": data.name or "",
+        "gender": data.gender,
+        "status": data.status,
+        "semester": data.semester,
+        "degreeProgram": data.degreeProgram,
+        "degreeName": data.degreeName,
+        "department": data.department,
+        "cgpa": data.cgpa,
+        "skills": data.skills,
+        "password": data.password,  # hash in production
         "created_at": datetime.utcnow()
     }
+    print("kuch bhi")
     res = await users_col.insert_one(user)
-    user_id = str(res.inserted_id)
-    return {"user_id": user_id, "email": data.email}
+    print("kuch bhi")
+    return {
+        "user_id": str(res.inserted_id),
+        "email": data.email,
+        "name": f"{data.firstName} {data.lastName}"
+    }
+
 
 @app.post("/api/signin")
 async def signin(data: SignInModel):
+    if  data.email=="admin@gmail.com" and data.password== "admin123":
+        return {
+            "user_id": "admin",
+            "email": data.email,
+            "name": "Administrator",
+        }
+    
     user = await users_col.find_one({"email": data.email})
     if not user or user.get("password") != data.password:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -90,6 +127,7 @@ async def categories():
 @app.get("/api/questions")
 async def get_questions(category: str):
     docs = await questions_col.find({"category": category}).to_list(length=100)
+    print(len(docs))
     if not docs:
         raise HTTPException(status_code=404, detail="No questions for this category")
     sample = random.sample(docs, min(5, len(docs)))
@@ -168,47 +206,116 @@ async def submit_answers(payload: SubmitRequest):
         timestamp=timestamp
     )
 
-# ---------- Seed questions (dev only) ----------
+# ---------- Seed questions using Gemini/OpenAI ----------
+import openai
+import json
+import os
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+openai.api_key = OPENAI_API_KEY
+
+CATEGORIES = ["Backend", "Frontend", "Full Stack", "AI Engineer", "ML Engineer"]
+
 @app.post("/api/seed_questions")
 async def seed_questions():
+    # Check if DB already has questions
     existing = await questions_col.count_documents({})
     if existing > 0:
         return {"inserted": 0, "message": "questions already exist"}
-    samples = [
-        # Backend
-        {"category":"Backend", "question":"Which HTTP method is used to update resources?","options":["GET","POST","PUT","DELETE"], "correct_index":2},
-        {"category":"Backend", "question":"What does REST stand for?","options":["Representational State Transfer","Remote Execution System","RESTful Endpoint","None"], "correct_index":0},
-        {"category":"Backend", "question":"Which database is relational?","options":["MongoDB","MySQL","Cassandra","Redis"], "correct_index":1},
-        {"category":"Backend", "question":"What is middleware in web frameworks?","options":["Client-side code","Database","Server-side layer between request and response","Styling tool"], "correct_index":2},
-        {"category":"Backend", "question":"Which status code means success?","options":["200","404","500","302"], "correct_index":0},
 
-        # Frontend
-        {"category":"Frontend","question":"Which language is used for styling web pages?","options":["HTML","Python","CSS","SQL"], "correct_index":2},
-        {"category":"Frontend","question":"Which JS method updates the DOM?","options":["fetch()","querySelector()","console.log()","setTimeout()"], "correct_index":1},
-        {"category":"Frontend","question":"What is React primarily used for?","options":["Database","UI Library","Styling","Server"], "correct_index":1},
-        {"category":"Frontend","question":"Which property controls flex container direction?","options":["align-items","flex-direction","display","position"], "correct_index":1},
-        {"category":"Frontend","question":"Which tag defines a hyperlink in HTML?","options":["<link>","<a>","<href>","<nav>"], "correct_index":1},
+    samples = []
 
-        # Full Stack (mix)
-        {"category":"Full Stack","question":"Which tool helps you version control code?","options":["VSCode","Git","Figma","Postman"], "correct_index":1},
-        {"category":"Full Stack","question":"Which environment runs JavaScript on the server?","options":["Django","Flask","Node.js","Rails"], "correct_index":2},
-        {"category":"Full Stack","question":"Which protocol is used by web browsers?","options":["FTP","HTTP","SMTP","SNMP"], "correct_index":1},
-        {"category":"Full Stack","question":"What does CRUD stand for?","options":["Create Read Update Delete","Check Read Update Delete","Compute Read Update Deploy","Create Run Update Deploy"], "correct_index":0},
-        {"category":"Full Stack","question":"Which database stores JSON-like documents?","options":["MySQL","MongoDB","OracleDB","Postgres"], "correct_index":1},
+    for category in CATEGORIES:
+        prompt = (
+            f"Generate 20 multiple choice questions for {category} students. "
+            "Each question must have: "
+            "- a 'question' field (string), "
+            "- an 'options' field (list of 4 strings), "
+            "- a 'correct_index' field (0-3 indicating correct option). "
+            "Return the output strictly as a JSON array."
+        )
 
-        # AI Engineer
-        {"category":"AI Engineer","question":"Which library is commonly used for deep learning?","options":["pandas","numpy","tensorflow","flask"], "correct_index":2},
-        {"category":"AI Engineer","question":"What is overfitting?","options":["Model underperforms on train data","Model performs well on unseen data","Model fits noise in training data","Model is perfectly generalized"], "correct_index":2},
-        {"category":"AI Engineer","question":"Which activation function outputs between 0 and 1?","options":["ReLU","tanh","sigmoid","softmax"], "correct_index":2},
-        {"category":"AI Engineer","question":"Which is a supervised learning task?","options":["Clustering","Classification","Dimensionality Reduction","None"], "correct_index":1},
-        {"category":"AI Engineer","question":"What is gradient descent used for?","options":["Data preprocessing","Model optimization","Feature selection","Visualization"], "correct_index":1},
+        try:
+            response = openai.chat.completions.create(
+                model="gpt-5-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7
+            )
+            content = response.choices[0].message["content"]
 
-        # ML Engineer
-        {"category":"ML Engineer","question":"What does bias-variance tradeoff refer to?","options":["Choosing wrong model","Balancing underfitting and overfitting","Feature engineering step","Hyperparameter tuning only"], "correct_index":1},
-        {"category":"ML Engineer","question":"Which technique reduces dimensionality?","options":["PCA","Gradient Boosting","Cross Validation","Dropout"], "correct_index":0},
-        {"category":"ML Engineer","question":"What is cross-validation used for?","options":["Testing speed","Model selection","Data cleaning","Deployment"], "correct_index":1},
-        {"category":"ML Engineer","question":"Which model is good for tabular data?","options":["CNN","RNN","XGBoost","GAN"], "correct_index":2},
-        {"category":"ML Engineer","question":"Which metric is used for regression problems?","options":["Accuracy","RMSE","Precision","F1-score"], "correct_index":1},
-    ]
+            # Remove code block if present
+            if content.startswith("```"):
+                lines = content.split("\n")
+                # Remove first and last line of ```json
+                content = "\n".join(lines[1:-1])
+
+            # Parse JSON safely
+            category_questions = json.loads(content)
+
+            # Add category field
+            for q in category_questions:
+                q["category"] = category
+            samples.extend(category_questions)
+
+        except Exception as e:
+            print(f"Error generating questions for {category}: {e}")
+            continue
+
+    if not samples:
+        raise HTTPException(status_code=500, detail="Failed to generate questions")
+
+    # Insert into MongoDB
     res = await questions_col.insert_many(samples)
     return {"inserted": len(res.inserted_ids)}
+
+@app.get("/api/admin/results")
+async def admin_results(
+    username: str = Query(...),
+    password: str = Query(...)
+):
+    if username != ADMIN_USERNAME or password != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    results = []
+    async for doc in attempts_col.find():
+        user = await users_col.find_one({"_id": doc["user_id"]})
+        results.append({
+            "id": str(doc["_id"]),
+            "student_name": user.get("username", "") if user else- "",
+            "firstName": user.get("firstName", "") if user else "",
+            "lastName": user.get("lastName", "") if user else "",
+            "email": user.get("email", "") if user else "",
+            "gender": user.get("gender", "") if user else "",
+            "status": user.get("status", "") if user else "",
+            "semester": user.get("semester", 0) if user else 0,
+            "degreeProgram": user.get("degreeProgram", "") if user else "",
+            "degreeName": user.get("degreeName", "") if user else "",
+            "department": user.get("department", "") if user else "",
+            "cgpa": user.get("cgpa", 0.0) if user else 0.0,
+            "skills": user.get("skills", "") if user else "",
+            "score": doc.get("score", 0),
+            "max_score": doc.get("max_score", 0),
+            "fit": doc.get("fit", False),
+            "inducted": doc.get("inducted", False),
+            "category": doc.get("category", "")
+        })
+
+    return results
+@app.post("/api/admin/induct/{attempt_id}")
+async def induct_student(
+    attempt_id: str,
+    username: str = Query(...),
+    password: str = Query(...)
+):
+    if username != ADMIN_USERNAME or password != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    res = await attempts_col.update_one(
+        {"_id": ObjectId(attempt_id), "fit": True},
+        {"$set": {"inducted": True}}
+    )
+
+    if res.modified_count == 0:
+        raise HTTPException(status_code=400, detail="Cannot induct student")
+
+    return {"message": "Student inducted"}

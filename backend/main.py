@@ -1,35 +1,50 @@
-# backend/main.py
-from fastapi import FastAPI, HTTPException
+"""Career Guidance API with SQLite and Gemini"""
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, EmailStr
-from motor.motor_asyncio import AsyncIOMotorClient
 from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
-import os
 import random
 from datetime import datetime
-from bson import ObjectId
-from fastapi import Query 
+import logging
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+from database import (
+    init_db, create_user, get_user_by_email, get_user_by_id,
+    get_questions_by_category, insert_questions, count_questions,
+    create_attempt, get_all_attempts, induct_student, get_question_by_id
+)
+from gemini_service import GeminiService
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Config
-MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
-DB_NAME = os.getenv("DB_NAME", "career_guidance_db")
 ADMIN_USERNAME = "admin@gmail.com"
 ADMIN_PASSWORD = "admin123"
 
-app = FastAPI(title="Career Guidance API - Sprint 2")
+app = FastAPI(title="Career Guidance API - SQLite + Gemini")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # set to frontend origin in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-client = AsyncIOMotorClient(MONGODB_URI)
-db = client[DB_NAME]
-users_col = db["users"]
-questions_col = db["questions"]
-attempts_col = db["attempts"]
+# Initialize database on startup
+@app.on_event("startup")
+async def startup_event():
+    init_db()
+    logger.info("Database initialized")
+
+# Initialize Gemini service
+gemini_service = GeminiService()
 
 # ---------- Models ----------
 class SignUpModel(BaseModel):
@@ -46,7 +61,6 @@ class SignUpModel(BaseModel):
     cgpa: float
     skills: Optional[str] = ""
     password: str
-
 
 class SignInModel(BaseModel):
     email: EmailStr
@@ -73,11 +87,11 @@ class SubmitResponse(BaseModel):
 # ---------- Auth ----------
 @app.post("/api/signup")
 async def signup(data: SignUpModel):
-    existing = await users_col.find_one({"email": data.email})
+    existing = get_user_by_email(data.email)
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
-
-    user = {
+    
+    user_data = {
         "username": data.username,
         "firstName": data.firstName,
         "lastName": data.lastName,
@@ -90,32 +104,37 @@ async def signup(data: SignUpModel):
         "department": data.department,
         "cgpa": data.cgpa,
         "skills": data.skills,
-        "password": data.password,  # hash in production
-        "created_at": datetime.utcnow()
+        "password": data.password  # hash in production
     }
-    print("kuch bhi")
-    res = await users_col.insert_one(user)
-    print("kuch bhi")
+    
+    user_id = create_user(user_data)
+    
     return {
-        "user_id": str(res.inserted_id),
+        "user_id": str(user_id),
         "email": data.email,
         "name": f"{data.firstName} {data.lastName}"
     }
 
-
 @app.post("/api/signin")
 async def signin(data: SignInModel):
-    if  data.email=="admin@gmail.com" and data.password== "admin123":
+    # Check admin credentials
+    if data.email == ADMIN_USERNAME and data.password == ADMIN_PASSWORD:
         return {
             "user_id": "admin",
             "email": data.email,
             "name": "Administrator",
         }
     
-    user = await users_col.find_one({"email": data.email})
+    # Check regular user
+    user = get_user_by_email(data.email)
     if not user or user.get("password") != data.password:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    return {"user_id": str(user["_id"]), "email": user["email"], "name": user.get("name","")}
+    
+    return {
+        "user_id": str(user["id"]),
+        "email": user["email"],
+        "name": user.get("username", "")
+    }
 
 # ---------- Categories ----------
 @app.get("/api/categories")
@@ -126,51 +145,123 @@ async def categories():
 # ---------- Questions endpoint ----------
 @app.get("/api/questions")
 async def get_questions(category: str):
-    docs = await questions_col.find({"category": category}).to_list(length=100)
-    print(len(docs))
-    if not docs:
-        raise HTTPException(status_code=404, detail="No questions for this category")
-    sample = random.sample(docs, min(5, len(docs)))
-    out = []
-    for d in sample:
-        out.append({
-            "id": str(d["_id"]),
-            "category": d["category"],
-            "question": d["question"],
-            "options": d["options"]
-        })
-    return {"questions": out}
+    """Generate fresh questions for the selected category using Gemini AI"""
+    
+    logger.info(f"Generating questions for category: {category}")
+    
+    # Generate 5 questions using Gemini
+    prompt = (
+        f"Generate exactly 5 multiple choice questions for {category} students. "
+        "Each question must have: "
+        "- a 'question' field (string), "
+        "- an 'options' field (array of exactly 4 strings), "
+        "- a 'correct_index' field (integer 0-3 indicating correct option). "
+        "Return the output strictly as a JSON array of 5 objects. "
+        "Make the questions practical and relevant to real-world {category} scenarios."
+    )
+    
+    try:
+        generated_questions = gemini_service.call_gemini(prompt, is_json=True)
+        
+        if not generated_questions:
+            logger.error(f"Gemini failed to generate questions for {category}")
+            raise HTTPException(
+                status_code=500, 
+                detail="Failed to generate questions. Please check Gemini API configuration."
+            )
+        
+        # Ensure it's a list
+        if not isinstance(generated_questions, list):
+            logger.error(f"Gemini response is not a list for {category}")
+            raise HTTPException(status_code=500, detail="Invalid response format from AI")
+        
+        # Validate and store questions temporarily in database
+        validated_questions = []
+        for q in generated_questions:
+            # Validate structure
+            if not all(key in q for key in ['question', 'options', 'correct_index']):
+                logger.warning(f"Skipping invalid question: {q}")
+                continue
+            
+            if not isinstance(q['options'], list) or len(q['options']) != 4:
+                logger.warning(f"Skipping question with invalid options: {q}")
+                continue
+            
+            # Add category
+            q['category'] = category
+            validated_questions.append(q)
+        
+        if len(validated_questions) < 5:
+            logger.warning(f"Only {len(validated_questions)} valid questions generated")
+        
+        # Store questions in database
+        if validated_questions:
+            insert_questions(validated_questions)
+            logger.info(f"Stored {len(validated_questions)} questions for {category}")
+        
+        # Get the newly inserted questions
+        all_category_questions = get_questions_by_category(category)
+        
+        # Return the latest 5 questions
+        latest_questions = all_category_questions[-5:] if len(all_category_questions) >= 5 else all_category_questions
+        
+        out = []
+        for q in latest_questions:
+            out.append({
+                "id": str(q["id"]),
+                "category": q["category"],
+                "question": q["question"],
+                "options": q["options"]
+            })
+        
+        logger.info(f"Successfully generated and returned {len(out)} questions for {category}")
+        return {"questions": out}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating questions for {category}: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error generating questions: {str(e)}"
+        )
 
 # ---------- Submit answers ----------
 @app.post("/api/submit", response_model=SubmitResponse)
 async def submit_answers(payload: SubmitRequest):
-    # verify user
+    # Verify user
     try:
-        u = await users_col.find_one({"_id": ObjectId(payload.user_id)})
-    except Exception:
-        u = None
-    if not u:
+        user_id = int(payload.user_id)
+        user = get_user_by_id(user_id)
+    except ValueError:
+        user = None
+    
+    if not user:
         raise HTTPException(status_code=404, detail="User not found")
-
+    
     total = 0
     max_score = len(payload.answers)
     detailed = []
+    
     for ans in payload.answers:
         try:
-            q = await questions_col.find_one({"_id": ObjectId(ans.question_id)})
-        except Exception:
+            question_id = int(ans.question_id)
+            q = get_question_by_id(question_id)
+        except ValueError:
             q = None
+        
         if not q:
             continue
+        
         correct_index = q.get("correct_index", 0)
         is_correct = (ans.selected_index == correct_index)
         if is_correct:
             total += 1
         detailed.append({"q_id": ans.question_id, "is_correct": is_correct})
-
+    
     score_percent = (total / max_score) * 100 if max_score > 0 else 0
     fit = score_percent >= 60
-
+    
     if fit:
         suggested_text = (
             f"Based on your responses you score {total}/{max_score} ({int(score_percent)}%). "
@@ -181,21 +272,21 @@ async def submit_answers(payload: SubmitRequest):
             f"Your score is {total}/{max_score} ({int(score_percent)}%). "
             f"You may need more practice for {payload.category}. Suggested: strengthen fundamentals, try beginner projects, and re-test after practice."
         )
-
-    attempt_doc = {
-        "user_id": ObjectId(payload.user_id),
+    
+    attempt_data = {
+        "user_id": user_id,
         "category": payload.category,
-        "answers": [a.dict() for a in payload.answers],
+        "answers": [{"question_id": a.question_id, "selected_index": a.selected_index} for a in payload.answers],
         "score": total,
         "max_score": max_score,
         "fit": fit,
         "suggested_text": suggested_text,
-        "detailed": detailed,
-        "created_at": datetime.utcnow()
+        "detailed": detailed
     }
-    res = await attempts_col.insert_one(attempt_doc)
-    timestamp = attempt_doc["created_at"].isoformat()
-
+    
+    create_attempt(attempt_data)
+    timestamp = datetime.utcnow().isoformat()
+    
     return SubmitResponse(
         user_id=payload.user_id,
         category=payload.category,
@@ -206,68 +297,69 @@ async def submit_answers(payload: SubmitRequest):
         timestamp=timestamp
     )
 
-# ---------- Seed questions using Gemini/OpenAI ----------
-import openai
-import json
-import os
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-openai.api_key = OPENAI_API_KEY
-
+# ---------- Seed questions using Gemini (Optional - for pre-populating database) ----------
 CATEGORIES = ["Backend", "Frontend", "Full Stack", "AI Engineer", "ML Engineer"]
 
 @app.post("/api/seed_questions")
 async def seed_questions():
-    # Check if DB already has questions
-    existing = await questions_col.count_documents({})
-    if existing > 0:
-        return {"inserted": 0, "message": "questions already exist"}
-
-    samples = []
-
+    """
+    Optional endpoint to pre-populate database with questions.
+    Note: The /api/questions endpoint now generates questions dynamically,
+    so this is only needed if you want to pre-seed the database.
+    """
+    
+    all_questions = []
+    
     for category in CATEGORIES:
         prompt = (
             f"Generate 20 multiple choice questions for {category} students. "
             "Each question must have: "
             "- a 'question' field (string), "
-            "- an 'options' field (list of 4 strings), "
-            "- a 'correct_index' field (0-3 indicating correct option). "
-            "Return the output strictly as a JSON array."
+            "- an 'options' field (array of exactly 4 strings), "
+            "- a 'correct_index' field (integer 0-3 indicating correct option). "
+            "Return the output strictly as a JSON array of objects. "
+            "Make questions practical and relevant to real-world scenarios."
         )
-
+        
+        logger.info(f"Pre-seeding questions for category: {category}")
+        
         try:
-            response = openai.chat.completions.create(
-                model="gpt-5-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.7
-            )
-            content = response.choices[0].message["content"]
-
-            # Remove code block if present
-            if content.startswith("```"):
-                lines = content.split("\n")
-                # Remove first and last line of ```json
-                content = "\n".join(lines[1:-1])
-
-            # Parse JSON safely
-            category_questions = json.loads(content)
-
-            # Add category field
+            category_questions = gemini_service.call_gemini(prompt, is_json=True)
+            
+            if not category_questions:
+                logger.error(f"Failed to generate questions for {category}")
+                continue
+            
+            # Ensure it's a list
+            if not isinstance(category_questions, list):
+                logger.error(f"Response is not a list for {category}")
+                continue
+            
+            # Add category field to each question
             for q in category_questions:
                 q["category"] = category
-            samples.extend(category_questions)
-
+            
+            all_questions.extend(category_questions)
+            logger.info(f"Generated {len(category_questions)} questions for {category}")
+            
         except Exception as e:
-            print(f"Error generating questions for {category}: {e}")
+            logger.error(f"Error generating questions for {category}: {e}")
             continue
-
-    if not samples:
+    
+    if not all_questions:
         raise HTTPException(status_code=500, detail="Failed to generate questions")
+    
+    # Insert into database
+    inserted_count = insert_questions(all_questions)
+    logger.info(f"Inserted {inserted_count} questions into database")
+    
+    return {
+        "inserted": inserted_count, 
+        "message": f"Successfully pre-seeded {inserted_count} questions",
+        "note": "Questions are now generated dynamically per request"
+    }
 
-    # Insert into MongoDB
-    res = await questions_col.insert_many(samples)
-    return {"inserted": len(res.inserted_ids)}
-
+# ---------- Admin endpoints ----------
 @app.get("/api/admin/results")
 async def admin_results(
     username: str = Query(...),
@@ -275,47 +367,54 @@ async def admin_results(
 ):
     if username != ADMIN_USERNAME or password != ADMIN_PASSWORD:
         raise HTTPException(status_code=401, detail="Unauthorized")
-
+    
+    attempts = get_all_attempts()
+    
     results = []
-    async for doc in attempts_col.find():
-        user = await users_col.find_one({"_id": doc["user_id"]})
+    for doc in attempts:
         results.append({
-            "id": str(doc["_id"]),
-            "student_name": user.get("username", "") if user else- "",
-            "firstName": user.get("firstName", "") if user else "",
-            "lastName": user.get("lastName", "") if user else "",
-            "email": user.get("email", "") if user else "",
-            "gender": user.get("gender", "") if user else "",
-            "status": user.get("status", "") if user else "",
-            "semester": user.get("semester", 0) if user else 0,
-            "degreeProgram": user.get("degreeProgram", "") if user else "",
-            "degreeName": user.get("degreeName", "") if user else "",
-            "department": user.get("department", "") if user else "",
-            "cgpa": user.get("cgpa", 0.0) if user else 0.0,
-            "skills": user.get("skills", "") if user else "",
+            "id": doc["id"],
+            "student_name": doc.get("username", ""),
+            "firstName": doc.get("firstName", ""),
+            "lastName": doc.get("lastName", ""),
+            "email": doc.get("email", ""),
+            "gender": doc.get("gender", ""),
+            "status": doc.get("status", ""),
+            "semester": doc.get("semester", 0),
+            "degreeProgram": doc.get("degreeProgram", ""),
+            "degreeName": doc.get("degreeName", ""),
+            "department": doc.get("department", ""),
+            "cgpa": doc.get("cgpa", 0.0),
+            "skills": doc.get("skills", ""),
             "score": doc.get("score", 0),
             "max_score": doc.get("max_score", 0),
-            "fit": doc.get("fit", False),
-            "inducted": doc.get("inducted", False),
+            "fit": bool(doc.get("fit", 0)),
+            "inducted": bool(doc.get("inducted", 0)),
             "category": doc.get("category", "")
         })
-
+    
     return results
+
 @app.post("/api/admin/induct/{attempt_id}")
-async def induct_student(
-    attempt_id: str,
+async def induct_student_endpoint(
+    attempt_id: int,
     username: str = Query(...),
     password: str = Query(...)
 ):
     if username != ADMIN_USERNAME or password != ADMIN_PASSWORD:
         raise HTTPException(status_code=401, detail="Unauthorized")
-
-    res = await attempts_col.update_one(
-        {"_id": ObjectId(attempt_id), "fit": True},
-        {"$set": {"inducted": True}}
-    )
-
-    if res.modified_count == 0:
+    
+    success = induct_student(attempt_id)
+    
+    if not success:
         raise HTTPException(status_code=400, detail="Cannot induct student")
-
+    
     return {"message": "Student inducted"}
+
+@app.get("/")
+async def root():
+    return {
+        "message": "Career Guidance API",
+        "database": "SQLite",
+        "ai_service": "Google Gemini"
+    }

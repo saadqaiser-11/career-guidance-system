@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
 pydantic
-motor
-python-multipart
-bson
+pydantic[email]
+requests
+python-dotenv

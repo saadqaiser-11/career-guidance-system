@@ -1,6 +1,0 @@
-fastapi
-uvicorn[standard]
-pydantic
-pydantic[email]
-requests
-python-dotenv

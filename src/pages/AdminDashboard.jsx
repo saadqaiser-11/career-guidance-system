@@ -9,7 +9,7 @@ export default function AdminDashboard() {
   const loadData = async () => {
     try {
       const res = await fetch(
-        "http://localhost:8000/api/admin/results?username=admin@gmail.com&password=admin123"
+        "https://backendofcareer-production.up.railway.app/api/admin/results?username=admin@gmail.com&password=admin123"
       );
       const json = await res.json();
       setData(json);
@@ -22,12 +22,52 @@ export default function AdminDashboard() {
     loadData();
   }, []);
 
+  const AGENT_URL = "https://imani-littlish-mckenna.ngrok-free.dev/chatbox";
+
   const induct = async (id) => {
     try {
+      // 1️⃣ First, induct the student in the backend
       await fetch(
-        `http://localhost:8000/api/admin/induct/${id}?username=admin@gmail.com&password=admin123`,
+        `https://backendofcareer-production.up.railway.app/api/admin/induct/${id}?username=admin@gmail.com&password=admin123`,
         { method: "POST" }
       );
+
+      // 2️⃣ Find the student data for the agent prompt
+      const student = data.find((d) => d.id === id);
+
+      // 3️⃣ Call the agent (fire and forget - no await)
+      if (student) {
+        const agentPrompt = `You are an assistant that MUST call tools.
+RULES:
+- Do NOT ask follow-up questions
+- Do NOT explain anything
+- ALWAYS call the update_student tool
+
+TASK:
+Update an existing student record.
+
+STUDENT IDENTIFIER:
+Email: ${student.email || "N/A"}
+
+UPDATED DATA:
+- inducted: true
+- student_name: ${student.student_name || "N/A"}
+- score: ${student.score}
+- fit: ${student.fit}`;
+
+        // Fire and forget - don't wait for response
+        fetch(AGENT_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            message: agentPrompt,
+            thread_id: `update-student-${id}`,
+          }),
+        }).catch((err) => console.warn("⚠️ Agent call failed:", err));
+      }
+
       loadData();
     } catch (error) {
       console.error("Error inducting student:", error);

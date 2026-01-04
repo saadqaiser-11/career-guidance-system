@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import "../App.css";
 import axios from "axios";
 
-const API = process.env.REACT_APP_API_URL || "http://localhost:8000/api";
+const API = "https://backendofcareer-production.up.railway.app/api";
 
 function SignIn() {
   const [email, setEmail] = useState("");

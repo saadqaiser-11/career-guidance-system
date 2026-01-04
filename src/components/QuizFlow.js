@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import axios from "axios";
 import "./QuizFlow.css";
 
-const API = process.env.REACT_APP_API_URL || "http://localhost:8000/api";
+const API = "https://backendofcareer-production.up.railway.app/api";
 
 function QuizFlow() {
   const [categories, setCategories] = useState([]);
